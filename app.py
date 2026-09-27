@@ -1,7 +1,6 @@
 import time
 import secrets
 import logging
-import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
@@ -15,12 +14,9 @@ log = logging.getLogger("exser")
 # CONFIG
 # ============================================
 KEY = "Larp67"
-SESSION_TTL = 1800          # 30 min
-RATE_LIMIT = 10             # max requests
-RATE_WINDOW = 60            # per 60 seconds
-
-YOUR_GAMEPASS_ID = 1998020950
-YOUR_USER_ID = 10080398364
+SESSION_TTL = 1800
+RATE_LIMIT = 10
+RATE_WINDOW = 60
 
 ALLOWED_ORIGINS = [
     "https://ex-ser-larped.vercel.app",
@@ -30,24 +26,19 @@ ALLOWED_ORIGINS = [
 ]
 
 # ============================================
-# STATE (in-memory)
+# STATE
 # ============================================
 latest = {"id": 0, "code": ""}
 inject_state = {"pending": False, "connected": False, "last_ping": 0}
 sessions = {}
 rate_log = {}
 blocked = {}
-gamepass_cache = {}
-CACHE_TTL = 300             # 5 min gamepass cache
 
 # ============================================
 # HELPERS
 # ============================================
-def get_cid():
-    return request.headers.get("X-Client-ID", "")
-
-def get_tok():
-    return request.headers.get("X-Session", "")
+def get_cid(): return request.headers.get("X-Client-ID", "")
+def get_tok(): return request.headers.get("X-Session", "")
 
 def is_rate_limited(cid):
     now = time.time()
@@ -86,43 +77,17 @@ def clean_old():
         if now > blocked[cid]:
             del blocked[cid]
 
-def user_owns_gamepass(user_id):
-    """Check via Roblox API if user owns the gamepass."""
-    now = time.time()
-    if user_id in gamepass_cache:
-        owns, ts = gamepass_cache[user_id]
-        if now - ts < CACHE_TTL:
-            return owns
-
-    try:
-        url = (
-            f"https://inventory.roblox.com/v1/users/{user_id}"
-            f"/items/GamePass/{YOUR_GAMEPASS_ID}/is-owned"
-        )
-        res = requests.get(url, timeout=5)
-        owns = res.status_code == 200 and res.json() is True
-        gamepass_cache[user_id] = (owns, now)
-        log.info(f"Gamepass check for {user_id}: {owns}")
-        return owns
-    except Exception as e:
-        log.error(f"Gamepass check failed: {e}")
-        return False
-
 # ============================================
-# MIDDLEWARE: Origin check (with exemptions)
+# MIDDLEWARE
 # ============================================
 @app.before_request
 def check_origin():
-    # Paths used by Delta (Roblox) — no Origin header
     exempt_paths = [
         '/api/v2/latest',
-        '/api/v2/ping-check',
-        '/api/v2/verify-access'
+        '/api/v2/ping-check'
     ]
-
     if request.path in exempt_paths:
         return None
-
     if request.method == "POST":
         origin = request.headers.get("Origin", "")
         if origin and origin not in ALLOWED_ORIGINS:
@@ -215,26 +180,5 @@ def ping_check():
         return jsonify({"pending": True})
     return jsonify({"pending": False})
 
-@app.route('/api/v2/verify-access', methods=['POST'])
-def verify_access():
-    data = request.get_json() or {}
-    user_id = data.get('user_id')
-
-    if not user_id:
-        return jsonify({"access": False, "reason": "no_user_id"}), 400
-
-    try:
-        uid = int(user_id)
-    except (ValueError, TypeError):
-        return jsonify({"access": False, "reason": "invalid_user_id"}), 400
-
-    if user_owns_gamepass(uid):
-        return jsonify({"access": True})
-    else:
-        return jsonify({"access": False, "reason": "no_gamepass"})
-
-# ============================================
-# RUN
-# ============================================
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
